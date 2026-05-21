@@ -1,0 +1,16 @@
+{
+  "short_name": "AbsensiSiswa",
+  "name": "AbsensiSiswa - HEheh",
+  "icons": [
+    {
+      "src": "/-19.jpg",
+      "type": "image/jpg",
+      "sizes": "192x192"
+    }
+  ],
+
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "background_color": "#f9fafb"
+}
