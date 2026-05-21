@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { 
   User, Download, ArrowLeft, ShieldCheck, RotateCw, 
@@ -6,11 +6,14 @@ import {
   Cat, Dog, Bird, Ghost, Smile, Eye, EyeOff
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase'; // Pastikan path ini benar
 
 const MyQRCode = ({ userData = {}, isDarkMode }) => {
   const [isFlipped, setIsFlipped] = useState(false);
-  const [isPrivate, setIsPrivate] = useState(false); // State baru untuk Privacy Mode
+  const [isPrivate, setIsPrivate] = useState(false); // Privacy Mode State
   const [rotate, setRotate] = useState({ x: 0, y: 0 });
+  const [siswaDetail, setSiswaDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
   const containerRef = useRef(null);
   const navigate = useNavigate();
 
@@ -23,10 +26,53 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
     { id: 'Smile', icon: <Smile size={48} /> },
   ];
 
+  // FETCH DATA SISWA BERDASARKAN EMAIL USER YANG LOGIN
+  useEffect(() => {
+    const fetchSiswaData = async () => {
+      const targetEmail = userData.email || '';
+      if (!targetEmail) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('dataSiswa')
+          .select('*')
+          .eq('email', targetEmail)
+          .maybeSingle();
+
+        if (!error && data) {
+          setSiswaDetail(data);
+        }
+      } catch (err) {
+        console.error('Error fetching dataSiswa for QR:', err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSiswaData();
+  }, [userData.email]);
+
+  // Gabungkan data dari database siswa, fallback ke props jika belum ada/gagal
+  const finalData = useMemo(() => {
+    return {
+      email: siswaDetail?.email || userData.email || 'guest@school.id',
+      nama: siswaDetail?.nama || userData.nama || userData.displayName || '',
+      nisn: siswaDetail?.nisn || userData.nisn || '0054321890',
+      kelas: siswaDetail?.kelas || userData.kelas || 'X PPLG',
+      role: siswaDetail?.role || userData.role || 'PREMIUM STUDENT',
+      profilePic: siswaDetail?.profilePic || userData.profilePic || 'User',
+      customPic: siswaDetail?.customPic || userData.customPic || null
+    };
+  }, [siswaDetail, userData]);
+
   // Handle Tilt Effect
   const handleMouseMove = (e) => {
     if (isFlipped) return;
     const card = containerRef.current;
+    if (!card) return;
     const rect = card.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -45,13 +91,18 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
     const pngUrl = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
     let downloadLink = document.createElement("a");
     downloadLink.href = pngUrl;
-    downloadLink.download = `QR_ID_${userData.email?.split('@')[0]}.png`;
+    const cleanName = finalData.email ? finalData.email.split('@')[0] : 'GUEST';
+    downloadLink.download = `QR_ID_${cleanName}.png`;
     document.body.appendChild(downloadLink);
     downloadLink.click();
     document.body.removeChild(downloadLink);
   };
 
-  const username = userData.email?.split('@')[0] || 'GUEST';
+  // Ambil username dari nama asli (jika ada), alternatif pakai split email
+  const username = useMemo(() => {
+    if (finalData.nama) return finalData.nama;
+    return finalData.email ? finalData.email.split('@')[0] : 'GUEST';
+  }, [finalData.nama, finalData.email]);
 
   return (
     <div className={`p-6 pb-40 min-h-screen transition-all duration-700 overflow-hidden relative ${isDarkMode ? 'bg-[#020617] text-white' : 'bg-slate-50 text-slate-800'}`}>
@@ -123,21 +174,21 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
             <div className="relative">
                 <div className="absolute -inset-4 bg-indigo-500/20 rounded-[4rem] blur-xl animate-pulse"></div>
                 <div className="w-36 h-36 bg-gradient-to-br from-indigo-600 to-violet-700 rounded-[3.5rem] flex items-center justify-center text-white shadow-2xl relative overflow-hidden ring-[12px] ring-indigo-500/10">
-                {userData.customPic ? (
-                    <img src={userData.customPic} className="w-full h-full object-cover" alt="Profile" />
+                {finalData.customPic ? (
+                    <img src={finalData.customPic} className="w-full h-full object-cover" alt="Profile" />
                 ) : (
-                    availableIcons.find(i => i.id === userData.profilePic)?.icon || <User size={54} />
+                    availableIcons.find(i => i.id === finalData.profilePic)?.icon || <User size={54} />
                 )}
                 </div>
             </div>
 
-            <div className="text-center z-10">
-              <h3 className="text-3xl font-black mb-2 tracking-tighter italic uppercase bg-gradient-to-b from-indigo-500 to-indigo-800 bg-clip-text text-transparent">
-                {username}
+            <div className="text-center z-10 w-full px-2">
+              <h3 className="text-2xl font-black mb-2 tracking-tighter italic uppercase bg-gradient-to-b from-indigo-500 to-indigo-800 bg-clip-text text-transparent truncate">
+                {loading ? 'LOADING...' : username}
               </h3>
               <div className="flex items-center gap-2 justify-center">
                 <span className="h-[1px] w-4 bg-indigo-500/30"></span>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">{userData.role || 'PREMIUM STUDENT'}</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">{finalData.role}</p>
                 <span className="h-[1px] w-4 bg-indigo-500/30"></span>
               </div>
             </div>
@@ -152,7 +203,7 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
               <div className={`transition-all duration-700 ${isPrivate ? 'blur-[18px] opacity-40 scale-90' : 'blur-0'}`}>
                 <QRCodeCanvas 
                   id="qr-siswa" 
-                  value={userData.email || 'guest@school.id'} 
+                  value={finalData.email} 
                   size={150} 
                   level="H" 
                   includeMargin={false}
@@ -201,9 +252,9 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
               
               <div className="space-y-8 flex-1">
                 {[
-                  { label: 'System Identifier', value: username, icon: <User size={14}/> },
-                  { label: 'Access Token', value: userData.nisn || '0054321890', icon: <ShieldAlert size={14}/> },
-                  { label: 'Assigned Registry', value: `${userData.kelas || 'XII RPL 1'} Class`, icon: <RotateCw size={14}/> }
+                  { label: 'System Identifier', value: finalData.email ? finalData.email.split('@')[0] : 'GUEST', icon: <User size={14}/> },
+                  { label: 'Access Token (NISN)', value: finalData.nisn, icon: <ShieldAlert size={14}/> },
+                  { label: 'Assigned Registry', value: `${finalData.kelas} Class`, icon: <RotateCw size={14}/> }
                 ].map((item, i) => (
                   <div key={i} className="animate-slideUp" style={{animationDelay: `${i * 150}ms`}}>
                     <div className="flex items-center gap-2 mb-2">
@@ -212,7 +263,7 @@ const MyQRCode = ({ userData = {}, isDarkMode }) => {
                     </div>
                     {/* Nilai Sensitif di-blur jika isPrivate aktif */}
                     <p className={`text-white font-bold text-lg border-l-2 border-indigo-600/30 pl-4 ml-1.5 transition-all duration-500 ${isPrivate ? 'blur-md select-none opacity-40' : 'blur-0'}`}>
-                      {item.value}
+                      {loading ? '...' : item.value}
                     </p>
                   </div>
                 ))}

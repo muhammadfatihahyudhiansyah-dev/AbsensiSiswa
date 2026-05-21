@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../hooks/useAuth'; // Inject Hook Auth
 import {
   UserPlus,
   Search,
@@ -16,10 +17,12 @@ import {
   LayoutGrid,
   List,
   Sparkles,
+  Layers, // Ditambahkan untuk ikon Role
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 
 const DataSiswa = ({ isDarkMode }) => {
+  const { user } = useAuth(); // Ambil Session Pengguna Aktif
   const navigate = useNavigate();
   const [dataSiswa, setDataSiswa] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -27,21 +30,46 @@ const DataSiswa = ({ isDarkMode }) => {
   const [editingSiswa, setEditingSiswa] = useState(null);
   const [viewMode, setViewMode] = useState('list');
   const [loading, setLoading] = useState(true);
+  const [currentRole, setCurrentRole] = useState('SISWA'); // State pemegang otoritas role
   const [formData, setFormData] = useState({
     nama: '',
     kelas: '',
     email: '',
     nisn: '',
+    role: 'SISWA', // Default role di form state
   });
 
-  // 1. FETCH DATA DARI SUPABASE
+  // 1. FETCH DATA DARI SUPABASE & IDENTIFIKASI ROLE
   useEffect(() => {
-    fetchSiswa();
-  }, []);
+    const initPage = async () => {
+      try {
+        setLoading(true);
+        
+        // Identifikasi Role Kredensial User Aktif
+        if (user?.email) {
+          const { data: roleData } = await supabase
+            .from('dataSiswa')
+            .select('role')
+            .eq('email', user.email)
+            .maybeSingle();
+          if (roleData?.role) {
+            setCurrentRole(roleData.role.toUpperCase());
+          }
+        }
+
+        await fetchSiswa();
+      } catch (err) {
+        console.error('Initialization error:', err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initPage();
+  }, [user]);
 
   const fetchSiswa = async () => {
     try {
-      setLoading(true);
       const { data, error } = await supabase
         .from('dataSiswa')
         .select('*')
@@ -51,8 +79,6 @@ const DataSiswa = ({ isDarkMode }) => {
       setDataSiswa(data || []);
     } catch (error) {
       console.error('Error fetching data:', error.message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -64,7 +90,7 @@ const DataSiswa = ({ isDarkMode }) => {
   );
 
   const resetForm = () => {
-    setFormData({ nama: '', kelas: '', email: '', nisn: '' });
+    setFormData({ nama: '', kelas: '', email: '', nisn: '', role: 'SISWA' });
     setEditingSiswa(null);
     setIsModalOpen(false);
   };
@@ -84,14 +110,15 @@ const DataSiswa = ({ isDarkMode }) => {
 
     try {
       if (editingSiswa) {
-        // Logika Update
+        // Logika Update dengan Role Dinamis
         const { error } = await supabase
           .from('dataSiswa')
           .update({
             nama: formData.nama,
             nisn: String(formData.nisn),
             kelas: formData.kelas,
-            email: formData.email
+            email: formData.email,
+            role: formData.role // Sync perubahan role ke database
           })
           .eq('id', editingSiswa.id);
 
@@ -106,21 +133,22 @@ const DataSiswa = ({ isDarkMode }) => {
           color: isDarkMode ? '#fff' : '#000',
         });
       } else {
-        // Logika Insert
+        // Logika Insert Akun/Siswa Baru dengan Role Terpilih
         const { error } = await supabase
           .from('dataSiswa')
           .insert([{
             nama: formData.nama,
             nisn: String(formData.nisn),
             kelas: formData.kelas,
-            email: formData.email
+            email: formData.email,
+            role: formData.role // Memasukkan role pilihan admin
           }]);
 
         if (error) throw error;
 
         Swal.fire({
           icon: 'success',
-          title: 'Siswa Ditambahkan',
+          title: 'User Baru Berhasil Ditambahkan',
           timer: 1000,
           showConfirmButton: false,
           background: isDarkMode ? '#1e293b' : '#fff',
@@ -142,6 +170,16 @@ const DataSiswa = ({ isDarkMode }) => {
 
   // 3. DELETE DATA
   const handleDelete = (id) => {
+    if (currentRole !== 'ADMIN') {
+      return Swal.fire({
+        icon: 'error',
+        title: 'Akses Ditolak',
+        text: 'Hanya tingkatan ADMIN yang diizinkan meluncurkan fungsi hapus cloud!',
+        background: isDarkMode ? '#1e293b' : '#fff',
+        color: isDarkMode ? '#fff' : '#000',
+      });
+    }
+
     Swal.fire({
       title: 'Hapus Data?',
       text: 'Siswa ini akan dihapus permanen dari cloud!',
@@ -204,16 +242,20 @@ const DataSiswa = ({ isDarkMode }) => {
               <Sparkles className="text-indigo-500 animate-pulse" size={20} />
             </div>
             <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.3em] mt-1">
-              Cloud Sync Active
+              Privilege: {currentRole}
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="p-5 bg-gradient-to-br from-indigo-500 to-violet-600 text-white rounded-[2rem] shadow-lg shadow-indigo-500/30 active:scale-90 transition-all"
-        >
-          <UserPlus size={24} />
-        </button>
+        
+        {/* HANYA ADMIN yang bisa membuka modal input/register */}
+        {currentRole === 'ADMIN' && (
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="p-5 bg-gradient-to-br from-indigo-500 to-violet-600 text-white rounded-[2rem] shadow-lg shadow-indigo-500/30 active:scale-90 transition-all"
+          >
+            <UserPlus size={24} />
+          </button>
+        )}
       </div>
 
       {/* Bar Pencarian & Toggle View */}
@@ -242,7 +284,7 @@ const DataSiswa = ({ isDarkMode }) => {
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 gap-4">
            <div className="w-10 h-10 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
-           <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.5em]">Synchronizing...</p>
+           <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.5em]">Checking Authority...</p>
         </div>
       ) : (
         <div className={viewMode === 'list' ? 'space-y-4' : 'grid grid-cols-2 gap-4'}>
@@ -263,9 +305,15 @@ const DataSiswa = ({ isDarkMode }) => {
                       {s.nama ? s.nama[0].toUpperCase() : '?'}
                     </div>
                     <div>
-                      <h4 className={`font-black text-sm tracking-tight leading-none mb-1 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
-                        {s.nama}
-                      </h4>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className={`font-black text-sm tracking-tight leading-none ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                          {s.nama}
+                        </h4>
+                        {/* Badge indikator role kecil di sebelah nama user */}
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md tracking-tighter ${s.role === 'ADMIN' ? 'bg-indigo-500/20 text-indigo-400' : s.role === 'GURU' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-500/20 text-slate-400'}`}>
+                          {s.role || 'SISWA'}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-2 opacity-60">
                         <span className={`text-[10px] font-bold uppercase ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{s.kelas}</span>
                         <span className="w-1 h-1 bg-indigo-500 rounded-full"></span>
@@ -275,22 +323,33 @@ const DataSiswa = ({ isDarkMode }) => {
                   </div>
 
                   <div className={`flex gap-2 ${viewMode === 'grid' ? 'mt-6 w-full' : ''}`}>
+                    {/* ADMIN & GURU BISA EDIT */}
                     <button
                       onClick={() => {
                         setEditingSiswa(s);
-                        setFormData(s);
+                        setFormData({
+                          nama: s.nama || '',
+                          kelas: s.kelas || '',
+                          email: s.email || '',
+                          nisn: s.nisn || '',
+                          role: s.role || 'SISWA', // inject role yang ada ke form data pas diedit
+                        });
                         setIsModalOpen(true);
                       }}
                       className={`flex-1 p-3 rounded-xl transition-all ${isDarkMode ? 'bg-slate-800 text-amber-400 hover:bg-amber-500 hover:text-white shadow-lg shadow-black/20' : 'bg-slate-100 text-amber-600 hover:bg-amber-600 hover:text-white shadow-sm'}`}
                     >
                       <Edit3 size={16} className="mx-auto" />
                     </button>
-                    <button
-                      onClick={() => handleDelete(s.id)}
-                      className={`flex-1 p-3 rounded-xl transition-all ${isDarkMode ? 'bg-slate-800 text-rose-400 hover:bg-rose-500 hover:text-white shadow-lg shadow-black/20' : 'bg-slate-100 text-rose-600 hover:bg-rose-600 hover:text-white shadow-sm'}`}
-                    >
-                      <Trash2 size={16} className="mx-auto" />
-                    </button>
+                    
+                    {/* HANYA ADMIN YANG BISA LIHAT DAN KLIK TOMBOL TRASH */}
+                    {currentRole === 'ADMIN' && (
+                      <button
+                        onClick={() => handleDelete(s.id)}
+                        className={`flex-1 p-3 rounded-xl transition-all ${isDarkMode ? 'bg-slate-800 text-rose-400 hover:bg-rose-500 hover:text-white shadow-lg shadow-black/20' : 'bg-slate-100 text-rose-600 hover:bg-rose-600 hover:text-white shadow-sm'}`}
+                      >
+                        <Trash2 size={16} className="mx-auto" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -373,13 +432,32 @@ const DataSiswa = ({ isDarkMode }) => {
                     className={`w-full pl-14 pr-6 py-5 rounded-[1.5rem] outline-none border-2 font-bold transition-all ${bgInput}`}
                   />
                 </div>
+
+                {/* DROPDOWN PRIVILEGE ROLE SELECTION */}
+                <div className="relative group">
+                  <Layers className="absolute left-5 top-5 text-indigo-500" size={18} />
+                  <select
+                    value={formData.role}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                    className={`w-full pl-14 pr-10 py-5 rounded-[1.5rem] outline-none border-2 font-bold transition-all appearance-none cursor-pointer ${bgInput}`}
+                  >
+                    <option value="SISWA" className={isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-800'}>SISWA</option>
+                    <option value="GURU" className={isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-800'}>GURU</option>
+                    <option value="ADMIN" className={isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-800'}>ADMIN (Full Access)</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-5 flex items-center text-slate-400">
+                    <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                      <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                    </svg>
+                  </div>
+                </div>
               </div>
 
               <button
                 type="submit"
                 className="w-full py-6 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-[2rem] font-black shadow-xl shadow-indigo-500/30 flex items-center justify-center gap-3 active:scale-95 transition-all mt-4 tracking-[0.2em] uppercase text-xs"
               >
-                <Save size={20} /> {editingSiswa ? 'Simpan Perubahan' : 'Daftarkan Siswa'}
+                <Save size={20} /> {editingSiswa ? 'Simpan Perubahan' : 'Daftarkan User'}
               </button>
             </form>
           </div>

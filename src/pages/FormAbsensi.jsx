@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Swal from 'sweetalert2';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../hooks/useAuth'; // Hubungkan dengan sistem Session Auth
 import {
   Search,
   QrCode,
@@ -10,19 +11,18 @@ import {
   Layers,
   ChevronDown,
   Sparkles,
-  ScanLine,
-  MapPin,
-  Clock,
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
 const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [selectedClass, setSelectedClass] = useState('Semua');
   const [selectedSiswa, setSelectedSiswa] = useState(null);
   const [status, setStatus] = useState('Hadir');
   const [catatan, setCatatan] = useState('');
   const [showScanner, setShowScanner] = useState(false);
+  const [operatorRole, setOperatorRole] = useState('GURU'); // Menyimpan identitas penanggung jawab scanner
 
   // Gunakan reference untuk menghindari loop render pada instance scanner kamera
   const dataSiswaRef = useRef(dataSiswa);
@@ -34,6 +34,23 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
   useEffect(() => { isDarkModeRef.current = isDarkMode; }, [isDarkMode]);
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { catatanRef.current = catatan; }, [catatan]);
+
+  // Identifikasi Tingkat Otoritas Akun Operator Absensi
+  useEffect(() => {
+    if (user?.email) {
+      const getOperatorRole = async () => {
+        const { data } = await supabase
+          .from('dataSiswa')
+          .select('role')
+          .eq('email', user.email)
+          .maybeSingle();
+        if (data?.role) {
+          setOperatorRole(data.role.toUpperCase());
+        }
+      };
+      getOperatorRole();
+    }
+  }, [user]);
 
   // Ambil daftar kelas unik dari dataSiswa
   const listKelas = useMemo(() => {
@@ -131,8 +148,14 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
 
       scanner.render(
         async (text) => {
-          // Cari siswa menggunakan data snapshot dari Ref agar tidak memicu re-render loop
-          const found = dataSiswaRef.current.find((s) => String(s.nisn) === text.trim());
+          const scannedText = text.trim();
+          
+          // Pencarian Pintar: deteksi berdasarkan Email terlebih dahulu, jika tidak ketemu baru fallback ke NISN
+          const found = dataSiswaRef.current.find((s) => {
+            const matchEmail = s.email && s.email.toLowerCase() === scannedText.toLowerCase();
+            const matchNisn = String(s.nisn) === scannedText;
+            return matchEmail || matchNisn;
+          });
           
           if (found) {
             setShowScanner(false);
@@ -172,7 +195,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
           <div className="flex items-center gap-2 mb-1">
             <Sparkles size={16} className="text-indigo-500 animate-pulse" />
             <span className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">
-              Terminal Cloud V1
+              Terminal Cloud V1 • {operatorRole}
             </span>
           </div>
           <h2 className={`text-4xl font-black italic tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase'; // Import Supabase Client
 import Swal from 'sweetalert2';
 import { 
   UserPlus, 
@@ -12,16 +13,23 @@ import {
   IdCard,
   Orbit,
   Zap,
-  Globe
+  Globe,
+  Layers,
+  KeyRound
 } from 'lucide-react';
 
 const Register = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('SISWA');
+  const [secretKey, setSecretKey] = useState(''); // State untuk kunci rahasia admin
   const [loading, setLoading] = useState(false);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const { register } = useAuth();
   const navigate = useNavigate();
+
+  // Token rahasia pengaman pendaftaran admin secara instan
+  const ADMIN_SECRET_TOKEN = 'ADMIN123XYZ'; 
 
   // Efek interaktif mengikuti mouse untuk background
   useEffect(() => {
@@ -35,11 +43,57 @@ const Register = () => {
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
+
+    // Validasi token rahasia sebelum menembak database
+    if (role === 'ADMIN' && secretKey !== ADMIN_SECRET_TOKEN) {
+      setLoading(false);
+      return Swal.fire({
+        title: 'ACCESS DENIED',
+        text: 'Secret Pass-Key untuk otoritas Admin salah!',
+        icon: 'error',
+        timer: 2000,
+        showConfirmButton: false,
+        background: '#ffffff',
+        color: '#f43f5e',
+        customClass: {
+          popup: 'rounded-[2.5rem] border-4 border-rose-50',
+        }
+      });
+    }
+
     try {
+      // 1. Daftarkan akun auth via hooks bawaan
       await register(email, password);
+
+      // 2. Cek apakah record dataSiswa sudah otomatis terbuat lewat trigger Supabase
+      const { data: existingProfile } = await supabase
+        .from('dataSiswa')
+        .select('id')
+        .eq('email', email.toLowerCase().trim())
+        .maybeSingle();
+
+      if (existingProfile) {
+        // Jika profile sudah dibuat trigger, langsung perbarui rolenya
+        await supabase
+          .from('dataSiswa')
+          .update({ role: role })
+          .eq('email', email.toLowerCase().trim());
+      } else {
+        // Jika profile belum terbuat, buat baris record baru
+        await supabase
+          .from('dataSiswa')
+          .insert([{
+            email: email.toLowerCase().trim(),
+            nama: email.split('@')[0], // ambil nama awal dari email
+            kelas: role === 'ADMIN' ? 'ADMINISTRATOR' : 'BELUM DIATUR',
+            nisn: String(Math.floor(10000000 + Math.random() * 90000000)), // NISN dummy acak
+            role: role
+          }]);
+      }
+
       Swal.fire({
         title: 'ENROLLED SUCCESS',
-        text: 'Identitas baru berhasil diarsipkan.',
+        text: `Identitas baru dengan privilese ${role} berhasil diarsipkan.`,
         icon: 'success',
         timer: 2000,
         showConfirmButton: false,
@@ -157,6 +211,47 @@ const Register = () => {
               </div>
             </div>
 
+            {/* DROP-DOWN SELECT ROLE */}
+            <div className="group">
+              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 ml-5">Account Authority Tier</label>
+              <div className="relative">
+                <Layers className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-indigo-500 transition-colors z-20" size={20} />
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="relative w-full bg-slate-50 border-2 border-transparent rounded-2xl pl-14 pr-10 py-5 text-slate-900 font-bold outline-none focus:border-indigo-100 focus:bg-white transition-all shadow-inner appearance-none cursor-pointer"
+                >
+                  <option value="SISWA">SISWA (Default Tier)</option>
+                  <option value="GURU">GURU (Operator Tier)</option>
+                  <option value="ADMIN">ADMIN (Full Access)</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-5 flex items-center text-slate-400 z-20">
+                  <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* INPUT TOKEN RAHASIA (Hanya render jika role ADMIN di-select) */}
+            {role === 'ADMIN' && (
+              <div className="group animate-fadeIn">
+                <label className="block text-[9px] font-black text-rose-500 uppercase tracking-[0.2em] mb-2 ml-5 animate-pulse">Root Clearance Code</label>
+                <div className="relative">
+                  <div className="absolute -inset-0.5 bg-rose-500/20 rounded-2xl blur"></div>
+                  <KeyRound className="absolute left-5 top-1/2 -translate-y-1/2 text-rose-400" size={20} />
+                  <input
+                    type="text"
+                    required
+                    value={secretKey}
+                    onChange={(e) => setSecretKey(e.target.value)}
+                    className="relative w-full bg-slate-50 border-2 border-rose-300 rounded-2xl pl-14 pr-6 py-5 text-slate-900 font-bold outline-none focus:bg-white focus:border-rose-500 transition-all placeholder:text-slate-300 text-sm tracking-widest"
+                    placeholder="Masukkan Token Admin"
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -214,18 +309,15 @@ const Register = () => {
           0%, 100% { transform: scale(1); }
           50% { transform: scale(0.95); }
         }
-        .animate-cardEntrance {
-          animation: cardEntrance 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-        .animate-blob {
-          animation: blob 8s infinite alternate ease-in-out;
-        }
-        .animate-spin-slow {
-          animation: spin-slow 15s linear infinite;
-        }
-        .animate-pulse-gentle {
-          animation: pulse-gentle 4s ease-in-out infinite;
-        }
+        .animate-cardEntrance { animation: cardEntrance 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-blob { animation: blob 8s infinite alternate ease-in-out; }
+        .animate-spin-slow { animation: spin-slow 15s linear infinite; }
+        .animate-pulse-gentle { animation: pulse-gentle 4s ease-in-out infinite; }
+        .animate-fadeIn { animation: fadeIn 0.4s ease-out forwards; }
       `}</style>
     </div>
   );
