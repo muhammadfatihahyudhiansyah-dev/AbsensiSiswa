@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Swal from 'sweetalert2';
 import { supabase } from '../lib/supabase';
 import {
@@ -24,13 +24,24 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
   const [catatan, setCatatan] = useState('');
   const [showScanner, setShowScanner] = useState(false);
 
+  // Gunakan reference untuk menghindari loop render pada instance scanner kamera
+  const dataSiswaRef = useRef(dataSiswa);
+  const isDarkModeRef = useRef(isDarkMode);
+  const statusRef = useRef(status);
+  const catatanRef = useRef(catatan);
+
+  useEffect(() => { dataSiswaRef.current = dataSiswa; }, [dataSiswa]);
+  useEffect(() => { isDarkModeRef.current = isDarkMode; }, [isDarkMode]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { catatanRef.current = catatan; }, [catatan]);
+
   // Ambil daftar kelas unik dari dataSiswa
   const listKelas = useMemo(() => {
     const kelas = dataSiswa.map((s) => s.kelas);
     return ['Semua', ...new Set(kelas)];
   }, [dataSiswa]);
 
-  // Filter pencarian berdasarkan kelas dan keyword (Sesuai tabel dataSiswa)
+  // Filter pencarian berdasarkan kelas dan keyword
   const filteredSearch = useMemo(() => {
     const term = search.toLowerCase().trim();
     if (!term || selectedSiswa) return [];
@@ -47,57 +58,15 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
       .slice(0, 5);
   }, [search, dataSiswa, selectedSiswa, selectedClass]);
 
-  useEffect(() => {
-    let scanner = null;
-    if (showScanner) {
-      scanner = new Html5QrcodeScanner('reader', {
-        fps: 20,
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1.0,
-      });
-
-      scanner.render(
-        (text) => {
-          const found = dataSiswa.find((s) => String(s.nisn) === text);
-          if (found) {
-            setSelectedSiswa(found);
-            setSearch(found.nama);
-            setShowScanner(false);
-            scanner.clear();
-
-            if (navigator.vibrate) navigator.vibrate(100);
-            Swal.fire({
-              icon: 'success',
-              title: 'QR Terverifikasi!',
-              text: `Identitas: ${found.nama}`,
-              timer: 1500,
-              showConfirmButton: false,
-              background: isDarkMode ? '#1e293b' : '#fff',
-              color: isDarkMode ? '#fff' : '#000',
-            });
-          }
-        },
-        () => {}
-      );
-    }
-    return () => {
-      if (scanner) scanner.clear().catch(() => {});
-    };
-  }, [showScanner, dataSiswa, isDarkMode]);
-
-  // FUNGSI HANDLE ABSEN - CONNECT TO SUPABASE
-  const handleAbsen = async (e) => {
-    e.preventDefault();
-    if (!selectedSiswa) return;
-
+  // FUNGSI INTI KIRIM DATA KE SUPABASE
+  const submitDataAbsen = async (siswa, currentStatus, currentCatatan) => {
     const ket =
-      status === 'Izin'
-        ? catatan
-        : status === 'Alfa'
+      currentStatus === 'Izin'
+        ? currentCatatan
+        : currentStatus === 'Alfa'
           ? 'Tanpa Keterangan'
           : 'Hadir Tepat Waktu';
 
-    // Perbaikan Format Tanggal agar diterima Supabase (YYYY-MM-DD)
     const now = new Date();
     const formatTanggal = now.toISOString().split('T')[0];
     const formatWaktu = now
@@ -105,27 +74,29 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
       .replace('.', ':');
 
     const entryData = {
-      nama: selectedSiswa.nama,
-      kelas: selectedSiswa.kelas,
-      status: status,
+      nama: siswa.nama,
+      kelas: siswa.kelas,
+      status: currentStatus,
       keterangan: ket,
-      tanggal: formatTanggal, // Hasilnya: 2026-05-13
+      tanggal: formatTanggal,
       waktu: formatWaktu,
     };
 
     try {
       const { error } = await supabase.from('absensi').insert([entryData]);
-
       if (error) throw error;
 
       Swal.fire({
         icon: 'success',
-        title: 'Berhasil!',
-        text: `${selectedSiswa.nama} berhasil absen (${status})`,
-        background: isDarkMode ? '#1e293b' : '#fff',
-        color: isDarkMode ? '#fff' : '#000',
+        title: 'Berhasil Absen!',
+        text: `${siswa.nama} berhasil dicatat (${currentStatus})`,
+        background: isDarkModeRef.current ? '#1e293b' : '#fff',
+        color: isDarkModeRef.current ? '#fff' : '#000',
+        timer: 2000,
+        showConfirmButton: false
       });
-      // Reset form
+
+      // Reset form state setelah berhasil masuk database & riwayat
       setSelectedSiswa(null);
       setSearch('');
       setCatatan('');
@@ -135,11 +106,58 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
         icon: 'error',
         title: 'Gagal Mengirim',
         text: error.message,
-        background: isDarkMode ? '#1e293b' : '#fff',
-        color: isDarkMode ? '#fff' : '#000',
+        background: isDarkModeRef.current ? '#1e293b' : '#fff',
+        color: isDarkModeRef.current ? '#fff' : '#000',
       });
     }
   };
+
+  // HANDLER TOMBOL SUBMIT MANUAL FORM
+  const handleAbsen = (e) => {
+    e.preventDefault();
+    if (!selectedSiswa) return;
+    submitDataAbsen(selectedSiswa, status, catatan);
+  };
+
+  // MANAGEMENT LIFECYCLE SCANNER QR CODE
+  useEffect(() => {
+    let scanner = null;
+    if (showScanner) {
+      scanner = new Html5QrcodeScanner('reader', {
+        fps: 25,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+      });
+
+      scanner.render(
+        async (text) => {
+          // Cari siswa menggunakan data snapshot dari Ref agar tidak memicu re-render loop
+          const found = dataSiswaRef.current.find((s) => String(s.nisn) === text.trim());
+          
+          if (found) {
+            setShowScanner(false);
+            
+            // Matikan scanner terlebih dahulu dengan aman sebelum mengirim data
+            if (scanner) {
+              await scanner.clear().catch((err) => console.log("Scanner clear error: ", err));
+            }
+
+            if (navigator.vibrate) navigator.vibrate(120);
+
+            // Jalankan fungsi auto-submit instan langsung menuju database Supabase
+            await submitDataAbsen(found, statusRef.current, catatanRef.current);
+          }
+        },
+        () => {}
+      );
+    }
+
+    return () => {
+      if (scanner) {
+        scanner.clear().catch((err) => console.log("Clean up error: ", err));
+      }
+    };
+  }, [showScanner]);
 
   const inputBaseClass = `w-full pl-12 pr-6 py-5 rounded-3xl outline-none font-bold border-2 transition-all duration-300 ${
     isDarkMode
@@ -148,9 +166,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
   }`;
 
   return (
-    <div
-      className={`min-h-screen p-6 pb-40 animate-fadeIn ${isDarkMode ? 'bg-[#020617]' : 'bg-slate-50'}`}
-    >
+    <div className={`min-h-screen p-6 pb-40 animate-fadeIn ${isDarkMode ? 'bg-[#020617]' : 'bg-slate-50'}`}>
       <div className="max-w-lg mx-auto flex justify-between items-end mb-10">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -159,26 +175,19 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
               Terminal Cloud V1
             </span>
           </div>
-          <h2
-            className={`text-4xl font-black italic tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}
-          >
+          <h2 className={`text-4xl font-black italic tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
             PRESENSI
           </h2>
         </div>
 
         <button
+          type="button"
           onClick={() => setShowScanner(!showScanner)}
           className={`relative p-5 rounded-[2rem] transition-all active:scale-90 shadow-2xl overflow-hidden group ${
-            showScanner
-              ? 'bg-rose-500 shadow-rose-500/20'
-              : 'bg-indigo-600 shadow-indigo-500/20'
+            showScanner ? 'bg-rose-500 shadow-rose-500/20' : 'bg-indigo-600 shadow-indigo-500/20'
           } text-white`}
         >
-          {showScanner ? (
-            <X size={24} className="relative z-10" />
-          ) : (
-            <QrCode size={24} className="relative z-10" />
-          )}
+          {showScanner ? <X size={24} className="relative z-10" /> : <QrCode size={24} className="relative z-10" />}
           <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
         </button>
       </div>
@@ -186,10 +195,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
       <div className="max-w-lg mx-auto space-y-6">
         {showScanner && (
           <div className="relative animate-slideUp">
-            <div
-              id="reader"
-              className="rounded-[2.5rem] overflow-hidden border-4 border-indigo-500 shadow-2xl bg-black"
-            ></div>
+            <div id="reader" className="rounded-[2.5rem] overflow-hidden border-4 border-indigo-500 shadow-2xl bg-black"></div>
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
               <div className="w-64 h-64 border-2 border-indigo-400/30 rounded-3xl relative overflow-hidden">
                 <div className="w-full h-1 bg-indigo-500 shadow-[0_0_15px_#6366f1] absolute top-0 left-0 animate-scanLoop"></div>
@@ -206,10 +212,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
           className={`${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-white shadow-2xl shadow-slate-200'} p-8 rounded-[3.5rem] border backdrop-blur-md space-y-6 animate-slideUp`}
         >
           <div className="relative group">
-            <Layers
-              className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-500"
-              size={18}
-            />
+            <Layers className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-500" size={18} />
             <select
               value={selectedClass}
               onChange={(e) => {
@@ -225,17 +228,11 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
                 </option>
               ))}
             </select>
-            <ChevronDown
-              className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none group-focus-within:rotate-180 transition-transform"
-              size={18}
-            />
+            <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none group-focus-within:rotate-180 transition-transform" size={18} />
           </div>
 
           <div className="relative">
-            <Search
-              className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-500"
-              size={18}
-            />
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-indigo-500" size={18} />
             <input
               type="text"
               placeholder="Cari Nama / NISN..."
@@ -248,9 +245,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
             />
 
             {filteredSearch.length > 0 && (
-              <div
-                className={`absolute left-0 right-0 top-[110%] rounded-[2rem] p-3 shadow-2xl z-[9999] border animate-fadeIn ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 text-slate-800'}`}
-              >
+              <div className={`absolute left-0 right-0 top-[110%] rounded-[2rem] p-3 shadow-2xl z-[9999] border animate-fadeIn ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 text-slate-800'}`}>
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-4 py-2">
                   Hasil Pencarian ({selectedClass})
                 </p>
@@ -265,9 +260,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
                   >
                     <div className="flex flex-col">
                       <span className="text-sm">{s.nama}</span>
-                      <span className="text-[9px] opacity-50 uppercase">
-                        {s.nisn}
-                      </span>
+                      <span className="text-[9px] opacity-50 uppercase">{s.nisn}</span>
                     </div>
                     <span className="text-[10px] bg-slate-500/10 group-hover:bg-white/20 px-2 py-1 rounded-lg uppercase tracking-tighter">
                       {s.kelas}
@@ -285,9 +278,7 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  <p
-                    className={`text-xs font-black uppercase ${isDarkMode ? 'text-white' : 'text-slate-800'}`}
-                  >
+                  <p className={`text-xs font-black uppercase ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
                     {selectedSiswa.nama}
                   </p>
                   <CheckCircle2 className="text-emerald-500" size={14} />
@@ -311,16 +302,8 @@ const FormAbsensi = ({ dataSiswa = [], isDarkMode }) => {
 
           <div className="grid grid-cols-3 gap-3">
             {[
-              {
-                id: 'Hadir',
-                col: 'bg-emerald-500',
-                shadow: 'shadow-emerald-500/40',
-              },
-              {
-                id: 'Izin',
-                col: 'bg-orange-500',
-                shadow: 'shadow-orange-500/40',
-              },
+              { id: 'Hadir', col: 'bg-emerald-500', shadow: 'shadow-emerald-500/40' },
+              { id: 'Izin', col: 'bg-orange-500', shadow: 'shadow-orange-500/40' },
               { id: 'Alfa', col: 'bg-rose-500', shadow: 'shadow-rose-500/40' },
             ].map((st) => (
               <button

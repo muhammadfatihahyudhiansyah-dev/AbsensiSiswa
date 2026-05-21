@@ -13,7 +13,7 @@ import MyQRCode from './pages/MyQRCode';
 import Riwayat from './pages/Riwayat';
 import UserProfile from './pages/UserProfile';
 import Info from './pages/Info';
-import Notifikasi from './pages/Nontifikasi';
+import Notifikasi from './pages/Nontifikasi'; // Tetap dipertahankan sesuai nama file Anda
 import Register from './pages/Register';
 
 // Import Provider & Hook
@@ -83,7 +83,7 @@ const AppContent = () => {
           <Route path="/dashboard" element={<PrivateRoute><Dashboard dataSiswa={dataSiswa} absensi={absensi} isDarkMode={isDarkMode} /></PrivateRoute>} />
           <Route path="/datasiswa" element={<PrivateRoute><DataSiswa dataSiswa={dataSiswa} setDataSiswa={setDataSiswa} /></PrivateRoute>} />
           
-          {/* PERBAIKAN DI SINI: Sekarang mengirim dataSiswa ke FormAbsensi */}
+          {/* Mengirim dataSiswa ke FormAbsensi */}
           <Route path="/absensi" element={
             <PrivateRoute>
               <FormAbsensi 
@@ -95,9 +95,29 @@ const AppContent = () => {
             </PrivateRoute>
           } />
 
-          <Route path="/leaderboard" element={<PrivateRoute><Leaderboard absensi={absensi} /></PrivateRoute>} />
+          {/* Mengirimkan dataSiswa dan isDarkMode ke komponen Leaderboard */}
+          <Route path="/leaderboard" element={
+            <PrivateRoute>
+              <Leaderboard 
+                absensi={absensi} 
+                dataSiswa={dataSiswa} 
+                isDarkMode={isDarkMode} 
+              />
+            </PrivateRoute>
+          } />
+          
           <Route path="/qrcode" element={<PrivateRoute><MyQRCode userData={userData} /></PrivateRoute>} />
-          <Route path="/riwayat" element={<PrivateRoute><Riwayat absensi={absensi} /></PrivateRoute>} />
+          
+          {/* Mengirimkan properti isDarkMode agar styling tema gelap/terang di Riwayat berfungsi penuh */}
+          <Route path="/riwayat" element={
+            <PrivateRoute>
+              <Riwayat 
+                absensi={absensi} 
+                isDarkMode={isDarkMode} 
+              />
+            </PrivateRoute>
+          } />
+          
           <Route path="/info" element={<PrivateRoute><Info /></PrivateRoute>} />
           <Route path="/notifikasi" element={<PrivateRoute><Notifikasi absensi={absensi} setAbsensi={setAbsensi} isDarkMode={isDarkMode} /></PrivateRoute>} />
           <Route path="/profile" element={
